@@ -1,4 +1,0 @@
-SimpleServer
-============
-
-C++ socket example

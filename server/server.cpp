@@ -1,15 +1,7 @@
-// server.cpp : Defines the entry point for the console application.
-//
-
-#include "stdafx.h"
-#include "server.h"
-
-#pragma comment(lib, "Ws2_32.lib")
+#include "Server.hpp"
 
 Server::Server()
 {
-	port = 27015;
-	memcpy(ip, "127.0.0.1", sizeof(ip));
 }
 
 Server::~Server()
@@ -17,126 +9,134 @@ Server::~Server()
 	EndServing();
 }
 
-BOOL Server::InitServer()
+bool Server::InitServer(unsigned short port)
 {
-	//initialize Winsock
-	WSADATA wsaData;
+	t_network_contener		*ret;
 
-	int iRet = WSAStartup(MAKEWORD(2, 2), &wsaData);
-	if(iRet != NO_ERROR)
-	{
-		printf("Error at WSAStartup()\n");
-		return FALSE;
-	}
-
-	//create a socket
-	m_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if(m_socket == INVALID_SOCKET)
-	{
-		printf("Error at socket():%ld\n",WSAGetLastError());
-		WSACleanup();
-		return FALSE;
-	}
-
-	//bind a socket
-	sockaddr_in service;
-	service.sin_family = AF_INET;
-	service.sin_addr.s_addr = inet_addr(ip);
-	service.sin_port = htons(port);
-
-	if(bind(m_socket, (SOCKADDR*)&service, sizeof(service)) == SOCKET_ERROR)
-	{
-		printf("bind() failed.\n");
-		closesocket(m_socket);
-		WSACleanup();
-		return FALSE;
-	}
-	else
-		printf("bind OK.\n");
-
-	//listen on a socket
-	if(listen(m_socket, 20) == SOCKET_ERROR)
-	{
-		printf("Error listening on socket.\n");
-		return FALSE;
-	}
-	else
-		printf("listening ok.\n");
-
-	return TRUE;
+	ret = &this->network_info;
+	//ret->name = strdup((name != NULL ? name : getenv("USER")));
+	ret->pe = getprotobyname("TCP");
+	if ((ret->socket = socket(AF_INET, SOCK_STREAM, ret->pe->p_proto)) == -1)
+		return (false);
+	  //exit_msg(1, "SERVER: Socket failed. :(");
+	ret->sin.sin_family = AF_INET;
+	ret->sin.sin_port = htons(port);
+	ret->sin.sin_addr.s_addr = INADDR_ANY;
+	if ((bind(ret->socket, (const struct sockaddr *)&ret->sin, sizeof(ret->sin))) == -1)
+		return (false);
+	  //exit_close_msg(1, "SERVER: Bind failed. :(", ret);
+	if ((listen(ret->socket, 32)) == -1)
+		return (false);
+	  //exit_close_msg(1, "SERVER: Listen failed. :(", ret);
+	printf(PROJECT" SERVER: Waiting for a client connection. :)\n");
+	return (true);
 }
 
-BOOL Server::StartServing()
+void 			Server::SelectConnection()
 {
-	//accept a connection
-	SOCKET AcceptSocket;
+	int			range;
 
-	printf("Waiting for a client to connect...\n");
+    this->network_info.tv.tv_sec = 1;
+    this->network_info.tv.tv_usec = 0;
+    FD_ZERO(&this->network_info.readf);
+    FD_SET(this->network_info.socket, &this->network_info.readf);
 
-	while(1)
+	std::list<unsigned int>::iterator it = this->clients.begin();
+	while (it != this->clients.end()) {
+		if ((*it) != -1)
+			FD_SET((*it), &this->network_info.readf);
+		++it;
+	}
+
+	range = this->network_info.socket + 1 + this->clients.size();
+    if (select(range, &this->network_info.readf, NULL, NULL, &this->network_info.tv) == -1)
+		return;  //exit_close_msg(1, "SERVER: Select failed. :(", irc);
+}
+
+void 			Server::ClientConnection()
+{
+	int			client_socket;
+    //char		name[80];
+    socklen_t   len;
+    static int	id;
+
+    len = sizeof(this->network_info.cli);
+    if (FD_ISSET(this->network_info.socket, &this->network_info.readf))
+      {
+        if ((client_socket = accept(this->network_info.socket, (struct sockaddr *)&this->network_info.cli, &len)) == -1)
+			return; //exit_close_msg(1, "SERVER: Accept failed. :(", irc);
+        printf(PROJECT" Client connected, IP: %s. :)\n", inet_ntoa(this->network_info.cli.sin_addr));
+        //sprintf(name, "User_%d", id);
+		this->clients.push_front(client_socket);
+        id++;
+      }
+}
+
+void 			Server::HandleConnection()
+{
+	int		read_result;
+    char	receive_stream[BUFSIZE];
+
+	std::list<unsigned int>::iterator it = this->clients.begin();
+	while (it != this->clients.end())
 	{
-		AcceptSocket = SOCKET_ERROR;
-		while(AcceptSocket == SOCKET_ERROR)
-			AcceptSocket = accept(m_socket, NULL, NULL);
+		if ((*it != -1) && FD_ISSET(*it, &this->network_info.readf))
+		{
+			read_result = read(*it, receive_stream, BUFSIZE);
+			if (read_result <= 0)
+			{
+				printf(PROJECT" SERVER: An user die. :(\n");
+				if (close(*it) == -1)
+		  			return; //exit_msg(1, "Close failed. :(");
+				*it = -2; // Our boy is now disconnected
+		    }
+			else {
+				receive_stream[read_result] = '\0';
+				std::string msg = "USER_" + std::to_string(*it) + " : " + receive_stream;
 
-		printf("Client Connected.\n");
+				BroadcastStringToEveryone(msg.c_str());
+			}
+		}
+		++it;
+	}
+}
 
-		DWORD dwThreadId;
-		HANDLE hThread;
+void Server::BroadcastStringToEveryone(const std::string & message)
+{
+	int		write_result;
 
-		hThread = CreateThread(NULL, NULL, HandleClient, (LPVOID)AcceptSocket, 0, &dwThreadId);
-		if(hThread == NULL)
-			printf("CreatThread AnswerThread() failed.\n");
-		else
-			printf("CreateThread OK.\n");
+	std::list<unsigned int>::iterator it = this->clients.begin();
+	while (it != this->clients.end())
+	{
+		if ((*it) != -1)
+		{
+			write_result = write((*it) , message.c_str(), message.length());
+		}
+		++it;
+	}
+}
 
+void Server::StartServing()
+{
+	while (true) {
+		SelectConnection();
+		ClientConnection();
+		HandleConnection();
 	}
 }
 
 void Server::EndServing()
 {
 	printf("Server shutting down...\n");
-	closesocket(m_socket);
-	WSACleanup();
 }
 
-DWORD WINAPI Server::HandleClient(LPVOID lparam)
+bool Server::Run()
 {
-	SOCKET ClientSocket = (SOCKET)lparam;
-	int tid = GetCurrentThreadId();
-
-	while (true)
-	{
-		char buffer[1024] = { 0 };
-		char time[64] = { 0 };
-		int bytesReceived = SOCKET_ERROR;
-
-		bytesReceived = recv(ClientSocket, buffer, sizeof(buffer), 0);
-
-		if (bytesReceived == 0 || bytesReceived == SOCKET_ERROR)
-			break;
-
-		SYSTEMTIME lt;
-		GetLocalTime(&lt);
-		sprintf_s(time, " %4d/%02d/%02d %02d:%02d:%02d.%03d", lt.wYear, lt.wMonth, lt.wDay,
-			lt.wHour, lt.wMinute, lt.wSecond, lt.wMilliseconds);
-		strcat_s(buffer, time);
-
-		send(ClientSocket, buffer, strlen(buffer), 0);
-		printf("Thread[%d] %s\n", tid, buffer);
-	}
-	printf("Thread[%d] terminated\n", tid);
-
-	return 0;
-}
-
-BOOL Server::run()
-{
-	if (!InitServer())
+	if (!InitServer(4000))
 	{
 		printf("Failed to init server.\n");
-		return FALSE;
+		return (false);
 	}
 	StartServing();
-	return TRUE;
+	return (true);
 }

@@ -1,9 +1,8 @@
-#include "stdafx.h"
-#include "server.h"
+#include "Server.hpp"
 
-int _tmain(int argc, _TCHAR* argv[])
+int	main(int argc, char **av)
 {
-	Server server;
-	server.run();
-	return 0;
+	Server	server;
+	server.Run();
+	return (0);
 }
