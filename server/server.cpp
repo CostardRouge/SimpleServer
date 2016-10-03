@@ -6,7 +6,8 @@ Server::Server()
 
 Server::~Server()
 {
-	EndServing();
+	printf(PROJECT" Server shutting down...\n");
+	close(this->network_info.socket);
 }
 
 bool Server::InitServer(unsigned short port)
@@ -123,11 +124,6 @@ void Server::StartServing()
 		ClientConnection();
 		HandleConnection();
 	}
-}
-
-void Server::EndServing()
-{
-	printf("Server shutting down...\n");
 }
 
 bool Server::Run()

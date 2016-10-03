@@ -53,7 +53,6 @@ public:
 
 	bool 			InitServer(unsigned short port);
 	void 			StartServing();
-	void 			EndServing();
 
 	void 			SelectConnection();
 	void 			ClientConnection();
